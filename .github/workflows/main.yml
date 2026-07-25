@@ -1,0 +1,53 @@
+if [ "$METHOD" = "ngrok" ]; then
+            nohup ngrok tcp $PORT --region=eu > ngrok_log.log 2>&1 &
+            sleep 10
+            curl --silent http://127.0.0.1:4040/api/tunnels > tunnels.json
+            TUNNEL_URL=$(jq -r ".tunnels[] | select(.config.addr==\"localhost:$PORT\") | .public_url" tunnels.json)
+            if [ -z "$TUNNEL_URL" ]; then
+                echo "::error::Failed to get Ngrok public address."
+                exit 1
+            fi
+            echo "${PROTOCOL}_URL=$TUNNEL_URL" >> $GITHUB_ENV
+            echo "CONNECTION_IP=$TUNNEL_URL" >> $GITHUB_ENV
+            echo "$PROTOCOL (Ngrok): $TUNNEL_URL"
+
+          elif [ "$METHOD" = "bore" ]; then
+            nohup bore local $PORT --to bore.pub > bore_log.log 2>&1 &
+            sleep 5
+            TUNNEL_INFO=$(grep "listening at bore.pub" bore_log.log | tail -n 1)
+            TUNNEL_IP=$(echo "$TUNNEL_INFO" | grep -Eo 'bore.pub:[0-9]+')
+            if [ -z "$TUNNEL_IP" ]; then
+                echo "::error::Failed to get Bore public address."
+                sudo pkill -f 'bore local' || true 
+                exit 1
+            fi
+            echo "${PROTOCOL}_URL=$TUNNEL_IP" >> $GITHUB_ENV
+            echo "CONNECTION_IP=$TUNNEL_IP" >> $GITHUB_ENV
+            echo "$PROTOCOL (Bore): $TUNNEL_IP"
+          fi
+
+      - name: Display VNC Connection Info and Keep Session Alive
+        run: |
+          echo "=== VNC CONNECTION INFORMATION ==="
+          echo "User: ${USERNAME}"
+          echo "Password: ${PASSWORD}"
+          echo
+          CONNECTION_TYPE="${{ env.CONNECTION_TYPE }}"
+          CONNECTION_IP="${{ env.CONNECTION_IP }}"
+          echo "Connection Method: $CONNECTION_TYPE"
+          echo "Selected Program: VNC (Port 5900)"
+          echo
+          if [ "$CONNECTION_TYPE" = "Tailscale" ]; then
+            echo "Tailscale IP:"
+            sudo tailscale ip -4 || true
+            echo
+            echo ">>> VNC Connection: $CONNECTION_IP:5900"
+          elif [ "$CONNECTION_TYPE" = "Ngrok" ] || [ "$CONNECTION_TYPE" = "Bore" ]; then
+            echo ">>> VNC ($CONNECTION_TYPE): $CONNECTION_IP"
+          else
+            echo "Connection failed or tunnel method not specified."
+          fi
+          echo
+          RUNTIME="${{ github.event.inputs.runtime }}"
+          sleep $((RUNTIME * 60))
+          echo "Session ended after $RUNTIME minutes."
